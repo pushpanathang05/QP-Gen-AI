@@ -1,0 +1,65 @@
+# Project Overview: QP Gen (Question Paper Generator)
+
+This document provides a structured summary of the QP Gen project, suitable for inclusion in a PowerPoint presentation.
+
+## 1. Project Architecture
+
+The system follows a microservices-inspired architecture with a decoupled frontend and specialized backend services.
+
+- **Frontend**: React.js (Vite)
+  - Responsive Dashboard for Faculty and Admins.
+  - Interactive Section Builder for question paper configuration.
+  - Real-time preview and generation status.
+- **Main Backend**: Node.js / Express
+  - RESTful API gateway.
+  - Authentication & Authorization (JWT-based).
+  - Business logic for syllabus management and template configuration.
+  - AI Integration: Powered by **Gemini Pro** for intelligent question generation.
+- **PDF Service**: Java / Spring Boot
+  - Specialized high-performance service for PDF rendering.
+  - Handles complex layouts and mathematical notations.
+
+---
+
+## 2. Database Schema (MongoDB/Mongoose)
+
+The project uses a NoSQL approach with MongoDB to handle semi-structured data like syllabus content and question templates.
+
+### Key Entities & Models:
+
+| Model | Description | Key Fields |
+| :--- | :--- | :--- |
+| **User** | System users and roles. | email, role (admin/faculty), status, passwordHash |
+| **Institution** | Organization context. | name, code, logoUrl, header/footer text |
+| **Course** | Academic course details. | courseId, code, title, department, semester |
+| **Syllabus** | Course curriculum data. | courseId, pdf (metadata/storage), extraction (text/chunks), units |
+| **Template** | Question paper formats. | institutionId, format (JSON), type (internal/end_sem), status |
+| **Note** | Supplementary materials. | courseId, unitNumber, extraction data (chunks) |
+| **AuditLog** | System activity tracking. | userId, action, resourceType, details, timestamp |
+
+### Relationships:
+- **One-to-Many**: One Institution can have many Courses and Templates.
+- **One-to-One**: Each Course has a specific Syllabus version.
+- **Embedded Documents**: Syllabus and Notes contain embedded "chunks" of text for AI processing and embedding.
+
+---
+
+## 3. Core Features
+
+- **AI-Powered Generation**: Automatically generates questions from syllabus content using Gemini Pro, adhering to Bloom's Taxonomy (BTL Levels K1-K6).
+- **Template Management**: Define customizable question paper structures for different institutions and exam types (Internal/End Semester).
+- **Syllabus Analysis**: Upload PDF syllabuses, extract text automatically, and break them down into units and topics.
+- **Section Builder**: Granular control over sections, marks, and question distributions.
+- **Secure Access**: Role-based access control (RBAC) ensuring only authorized faculty can generate papers.
+- **PDF Generation**: Professional-grade PDF output with institutional branding and standardized formatting.
+
+---
+
+## 4. Tech Stack Summary
+
+- **UI/UX**: React, Tailwind CSS, Lucide Icons.
+- **Backend**: Node.js, Express, Mongoose.
+- **PDF Engine**: Spring Boot, iText/OpenPDF (implied).
+- **AI/ML**: Google Gemini Pro API, Ollama (local fallback).
+- **Database**: MongoDB Atlas / Local MongoDB.
+- **DevOps**: Maven (Java), NPM (JS).
