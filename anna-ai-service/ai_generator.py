@@ -6,6 +6,11 @@ import json
 import traceback
 from collections import defaultdict, Counter
 from btl_engine import BTLEngine
+import google.generativeai as genai
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 class OllamaClient:
     def __init__(self, model="deepseek-r1:1.5b", base_url="http://localhost:11434"):
@@ -46,10 +51,87 @@ Your sole task is to generate high-quality, academic-standard examination questi
             print(f"Ollama Error: {e}")
             return None
 
+class GeminiClient:
+    def __init__(self, api_key=None, model_name="gemini-1.5-pro"):
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(model_name)
+            self.enabled = True
+        else:
+            self.enabled = False
+            print("Gemini API Key missing. GeminiClient disabled.")
+
+    def generate_questions_batch(self, sub, unit, marks, btl, count):
+        if not self.enabled: return None
+        
+        prompt = f"""You are an expert Anna University question paper setter with deep knowledge of Bloom’s Taxonomy.
+
+Generate a high-quality university question paper based on the following inputs:
+
+Subject: {sub}
+Unit: {unit}
+Marks per question: {marks}
+BTL Level: {btl}
+Number of questions: {count}
+
+Strict Requirements:
+- Generate EXACTLY {count} questions
+- Each question must strictly match {marks} marks standard
+- Questions must strictly follow Bloom’s Taxonomy Level {btl}
+- Avoid simple definitions or recall-based questions unless BTL is 1 or 2
+- Ensure questions are analytical, application-based, or problem-solving (if BTL >= 3)
+- Cover different important concepts from the given unit
+- Do NOT repeat concepts or concepts/questions
+- Maintain Anna University exam style and difficulty level
+- Use clear, formal, academic language
+
+Quality Constraints:
+- Questions must be suitable for university semester exams
+- Avoid vague or generic questions
+- Prefer scenario-based or practical-oriented questions where applicable
+- Ensure proper verb usage based on BTL (e.g., Analyze, Design, Evaluate, Compare)
+
+Strict Output Format (MUST FOLLOW):
+Q1. <question>
+Q2. <question>
+Q3. <question>
+Q4. <question>
+Q5. <question>
+
+Rules:
+- Do NOT include answers
+- Do NOT include explanations
+- Do NOT include headings or extra text
+- Output ONLY the questions"""
+
+        try:
+            response = self.model.generate_content(prompt)
+            text = response.text.strip()
+            # Parse Q1. Q2. etc. into a list
+            questions = re.findall(r'Q\d+\.\s*(.*?)(?=Q\d+\.|$)', text, re.DOTALL)
+            return [q.strip() for q in questions]
+        except Exception as e:
+            print(f"Gemini Error: {e}")
+            return None
+
+    def generate_single_question(self, topic, btl_level, marks):
+        if not self.enabled: return None
+        
+        prompt = f"Generate a {marks}-mark university exam question on the topic '{topic}' at Bloom's Taxonomy Level {btl_level}. Output ONLY the question text."
+        
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            print(f"Gemini Error: {e}")
+            return None
+
 class AUQuestionGenerator:
     def __init__(self):
         self.btl_engine = BTLEngine()
         self.ollama = OllamaClient()
+        self.gemini = GeminiClient()
         self.stop_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 
                           'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 
                           'its', 'look', 'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who'}
@@ -183,7 +265,13 @@ class AUQuestionGenerator:
         """Generates a single question with LLM Reasoning."""
         topic = topic or "Fundamental Concept"
         
-        q_text = self.ollama.generate_question(topic, btl_level, marks)
+        # Try Gemini first if enabled, then Ollama, then Template
+        q_text = None
+        if self.gemini.enabled:
+            q_text = self.gemini.generate_single_question(topic, btl_level, marks)
+        
+        if not q_text and self.ollama.enabled:
+            q_text = self.ollama.generate_question(topic, btl_level, marks)
         
         if not q_text:
             stem = random.choice(self.btl_engine.get_stems(btl_level))

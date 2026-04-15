@@ -6,3 +6,5 @@ reportlab
 torch
 numpy
 requests
+google-generativeai
+python-dotenv
