@@ -140,25 +140,6 @@ function CourseAccess() {
   const handleUploadSyllabus = async (e) => {
     e.preventDefault()
     setError('')
-    //#region agent log
-    fetch('http://127.0.0.1:7242/ingest/e5eabc4c-5108-4e15-b000-52b155d3463d', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 'log_course_upload_1',
-        runId: 'pre-fix',
-        hypothesisId: 'H1',
-        location: 'CourseAccess.jsx:140',
-        message: 'handleUploadSyllabus submit',
-        data: {
-          hasFile: !!syllabusPdf,
-          fileName: syllabusPdf?.name || null,
-          selectedCourseId,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => { })
-    //#endregion
     if (!selectedCourseId) {
       setError('Select a course first.')
       return
@@ -173,9 +154,18 @@ function CourseAccess() {
       fd.append('pdf', syllabusPdf)
       fd.append('courseId', selectedCourseId)
       fd.append('version', syllabusVersion)
-      await apiRequest('/api/uploads/syllabus', { method: 'POST', body: fd })
+      
+      console.log('[UPLOAD START]: /api/uploads/syllabus', {
+        courseId: selectedCourseId,
+        version: syllabusVersion,
+        fileName: syllabusPdf.name
+      })
+
+      const res = await apiRequest('/api/uploads/syllabus', { method: 'POST', body: fd })
+      alert('Syllabus uploaded and extracted successfully!')
       setSyllabusPdf(null)
     } catch (err) {
+      console.error('[UPLOAD FAILED]:', err)
       setError(err?.message || 'Failed to upload syllabus.')
     }
   }
@@ -202,6 +192,29 @@ function CourseAccess() {
       setNotePdf(null)
     } catch (err) {
       setError(err?.message || 'Failed to upload notes.')
+    }
+  }
+
+  const handleDeleteCourse = async (courseId) => {
+    if (!window.confirm('Are you sure? This will delete the course, syllabus, and all notes.')) return
+    try {
+      await apiRequest(`/api/courses/${courseId}`, { method: 'DELETE' })
+      if (selectedCourseId === courseId) setSelectedCourseId('')
+      await loadAll()
+    } catch (err) {
+      setError(err?.message || 'Failed to delete course.')
+    }
+  }
+
+  const handleClearAllCourses = async () => {
+    if (!window.confirm('⚠️ DANGER: This will delete ALL courses and ALL related data in the system. Proceed?')) return
+    try {
+      await apiRequest('/api/courses', { method: 'DELETE' })
+      setSelectedCourseId('')
+      setCourses([])
+      await loadAll()
+    } catch (err) {
+      setError(err?.message || 'Failed to clear courses.')
     }
   }
 
@@ -296,19 +309,36 @@ function CourseAccess() {
               </div>
 
               <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Select Course</label>
-                <select
-                  value={selectedCourseId}
-                  onChange={(e) => setSelectedCourseId(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm transition-colors"
-                >
-                  <option value="">-- Select --</option>
-                  {courses.map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.courseId} — {c.title}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Select Course</label>
+                    <div className="flex gap-2 items-start mt-1">
+                      <select
+                        value={selectedCourseId}
+                        onChange={(e) => setSelectedCourseId(e.target.value)}
+                        className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm transition-colors"
+                      >
+                        <option value="">-- Select --</option>
+                        {courses.map((c) => (
+                          <option key={c._id} value={c._id}>
+                            {c.courseId} — {c.title}
+                          </option>
+                        ))}
+                      </select>
+                      {isAdmin && selectedCourseId && (
+                        <button
+                          onClick={() => handleDeleteCourse(selectedCourseId)}
+                          className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md border border-red-200 dark:border-red-900/30 transition-colors"
+                          title="Delete selected course"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
                 {selectedCourse && (
                   <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     Code: {selectedCourse.code} | Dept: {selectedCourse.department || '-'} | Semester:{' '}
@@ -408,25 +438,6 @@ function CourseAccess() {
                     onChange={(e) => {
                       const file = e.target.files?.[0] || null
                       setSyllabusPdf(file)
-                      //#region agent log
-                      fetch('http://127.0.0.1:7242/ingest/e5eabc4c-5108-4e15-b000-52b155d3463d', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          id: 'log_course_upload_2',
-                          runId: 'pre-fix',
-                          hypothesisId: 'H2',
-                          location: 'CourseAccess.jsx:386',
-                          message: 'syllabus file selected',
-                          data: {
-                            hasFile: !!file,
-                            fileName: file?.name || null,
-                            fileType: file?.type || null,
-                          },
-                          timestamp: Date.now(),
-                        }),
-                      }).catch(() => { })
-                      //#endregion
                     }}
                     className="mt-1 w-full text-sm text-gray-700 dark:text-gray-300"
                   />
@@ -480,6 +491,26 @@ function CourseAccess() {
                 </button>
               </form>
             </section>
+
+            {isAdmin && (
+              <section className="bg-red-50 dark:bg-red-900/10 rounded-xl border border-dashed border-red-200 dark:border-red-900/30 p-6 transition-colors">
+                <h2 className="text-lg font-semibold text-red-700 dark:text-red-400 flex items-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  Danger Zone
+                </h2>
+                <p className="text-sm text-red-600/70 dark:text-red-400/70 mt-1">
+                  Permanently clear all data for a fresh start.
+                </p>
+                <button
+                  onClick={handleClearAllCourses}
+                  className="mt-4 w-full rounded-md bg-red-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-red-700 transition-colors"
+                >
+                  Clear All Courses & Data
+                </button>
+              </section>
+            )}
           </div>
         </div>
       )}

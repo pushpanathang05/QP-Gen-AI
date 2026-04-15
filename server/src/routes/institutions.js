@@ -8,7 +8,6 @@ import { writeAuditLog } from '../services/audit.js'
 const router = express.Router()
 
 router.use(requireAuth)
-router.use(requireRole(['admin']))
 
 router.get('/', async (req, res, next) => {
   try {
@@ -18,6 +17,9 @@ router.get('/', async (req, res, next) => {
     next(err)
   }
 })
+
+// Restricted routes below
+router.use(requireRole(['admin']))
 
 router.post('/', async (req, res, next) => {
   try {

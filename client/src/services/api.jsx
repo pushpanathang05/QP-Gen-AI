@@ -28,6 +28,11 @@ export async function apiRequest(path, { method = 'GET', body, headers } = {}) {
   const data = await readJsonSafe(res)
   if (!res.ok) {
     const message = data?.error || `Request failed (${res.status})`
+    console.error(`[API ERROR] ${method} ${path}:`, {
+      status: res.status,
+      error: data?.error,
+      fullResponse: data
+    })
     const err = new Error(message)
     err.status = res.status
     err.data = data

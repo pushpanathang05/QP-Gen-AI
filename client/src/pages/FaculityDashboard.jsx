@@ -4,6 +4,17 @@ import { useAuth } from '../store/authStore'
 
 const quickActions = [
   {
+    title: 'One-Click AI ✨',
+    description: 'Rapidly generate a full AI paper PDF from a syllabus.',
+    href: '/one-click-ai',
+    icon: (
+      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+      </svg>
+    ),
+    color: 'bg-indigo-600',
+  },
+  {
     title: 'Create Question Paper',
     description: 'Build a new question paper using the section builder.',
     href: '/exam-mode',

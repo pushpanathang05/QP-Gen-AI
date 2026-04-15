@@ -2,6 +2,7 @@ import express from 'express'
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
+import mongoose from 'mongoose'
 
 import Syllabus from '../models/Syllabus.js'
 import Note from '../models/Note.js'
@@ -46,18 +47,29 @@ router.post('/syllabus', requireAuth, requireRole(['admin']), upload.single('pdf
   try {
     const { courseId, version, uploadedBy: uploadedByBody } = req.body
     const uploadedBy = req.user?.id || uploadedByBody
+    
+    console.log('[Upload Payload]:', { courseId, version, uploadedBy, hasFile: !!req.file })
+
     if (!req.file) return res.status(400).json({ error: 'pdf is required' })
     if (!courseId || !version || !uploadedBy) {
+      console.warn('[Upload Validation Failed]: Missing required fields')
       return res.status(400).json({ error: 'courseId, version, uploadedBy are required' })
     }
 
     const filePath = req.file.path
     const sha256 = await sha256File(filePath)
 
-    const doc = await Syllabus.create({
-      courseId,
-      version,
-      source: 'pdf',
+    // Force ObjectId casting to ensure strict type matching in queries
+    let oid
+    try {
+      oid = new mongoose.Types.ObjectId(String(courseId))
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid [courseId] format' })
+    }
+
+    // Atomic Upsert: Update if exists, or Create if not. 
+    // This is bulletproof against E11000 duplicate key errors.
+    const updateData = {
       pdf: {
         originalFileName: req.file.originalname,
         mimeType: req.file.mimetype,
@@ -68,7 +80,16 @@ router.post('/syllabus', requireAuth, requireRole(['admin']), upload.single('pdf
         uploadedAt: new Date(),
       },
       extraction: { status: 'processing' },
-    })
+      source: 'pdf'
+    }
+
+    const doc = await Syllabus.findOneAndUpdate(
+      { courseId: oid, version: version.trim() },
+      { $set: updateData },
+      { upsert: true, new: true, runValidators: true }
+    )
+
+    console.log(`[Upsert]: Syllabus for course ${courseId} is now ID: ${doc._id}`)
 
     // Extract immediately (can be moved to background worker later)
     try {
@@ -105,6 +126,7 @@ router.post('/notes', requireAuth, requireRole(['admin', 'faculty']), upload.sin
     const { courseId, unitNumber, title, uploadedBy: uploadedByBody } = req.body
     const uploadedBy = req.user?.id || uploadedByBody
     if (!req.file) return res.status(400).json({ error: 'pdf is required' })
+    
     if (!courseId || !unitNumber || !title || !uploadedBy) {
       return res
         .status(400)
@@ -161,8 +183,19 @@ router.post('/notes', requireAuth, requireRole(['admin', 'faculty']), upload.sin
 })
 
 router.use((err, req, res, next) => {
+  console.error('[Upload Route Error]:', err)
   const message = err?.message || 'Unknown error'
-  const status = message.includes('Only PDF') ? 400 : 500
+  let status = 500
+
+  if (message.includes('Only PDF')) {
+    status = 400
+  } else if (err.code === 11000 || message.includes('11000')) {
+    status = 409 // Conflict
+    return res.status(status).json({ 
+      error: 'A syllabus for this course and version already exists. Please delete the old one or choose a different version.' 
+    })
+  }
+
   res.status(status).json({ error: message })
 })
 

@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  anna-ai-service:
+    build: .
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./uploads:/app/uploads
+    environment:
+      - PORT=5001
+    restart: always

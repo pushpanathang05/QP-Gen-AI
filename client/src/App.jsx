@@ -14,6 +14,7 @@ import History from './pages/History'
 import PreviewPaper from './pages/PreviewPaper'
 import SectionBuilder from './pages/sectionBuilder'
 import Templates from './pages/Templates'
+import OneClickAI from './pages/OneClickAI'
 import VerifyAdmin from './pages/VerifyAdmin'
 
 function App() {
@@ -30,13 +31,14 @@ function App() {
       {/* Protected Routes */}
       <Route element={<DashboardLayout />}>
         <Route path="/admin-dashboard" element={<ProtectedRoute requiredRole="admin"><AdminDashboard /></ProtectedRoute>} />
-        <Route path="/faculty-dashboard" element={<ProtectedRoute requiredRole="faculty"><FaculityDashboard /></ProtectedRoute>} />
+        <Route path="/faculty-dashboard" element={<ProtectedRoute><FaculityDashboard /></ProtectedRoute>} />
         <Route path="/course-access" element={<ProtectedRoute><CourseAccess /></ProtectedRoute>} />
         <Route path="/exam-mode" element={<ProtectedRoute><ExamMode /></ProtectedRoute>} />
         <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
         <Route path="/preview-paper" element={<ProtectedRoute><PreviewPaper /></ProtectedRoute>} />
         <Route path="/section-builder" element={<ProtectedRoute><SectionBuilder /></ProtectedRoute>} />
         <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
+        <Route path="/one-click-ai" element={<ProtectedRoute><OneClickAI /></ProtectedRoute>} />
       </Route>
     </Routes>
   )

@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import { apiRequest } from '../services/api'
 import BTLBadge from '../components/BTLBadge'
 
+const API_BASE_URL = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '')
+
 function SectionBuilder() {
   const [searchParams] = useSearchParams()
   const courseId = searchParams.get('courseId') || ''
@@ -35,21 +37,18 @@ function SectionBuilder() {
         const count = Number(s.number_of_questions || 0)
         const marks = Number(s.marks_per_question || 0)
         const btlDefault = 'K1'
-        const baseNumber = idx * 100
+        
+        // Continuous numbering across sections
+        const previousQuestionsCount = sectionsArray.reduce((acc, sec) => acc + sec.questions.length, 0)
+        
         const questions = Array.from({ length: Math.max(1, count || 1) }).map((_, i) => {
-          let qMarks = marks || 0
-          let qType = marks >= 10 ? 'analytical' : marks <= 2 ? 'one_mark' : 'definition'
-          if (btlDefault === 'K1') {
-            qMarks = 1
-            qType = 'k1_short'
-          }
           return {
-            questionNumber: String(baseNumber + i + 1),
-            type: qType,
+            questionNumber: String(previousQuestionsCount + i + 1),
+            type: marks >= 10 ? 'analytical' : marks <= 2 ? 'one_mark' : 'definition',
             unit: '',
             topic: '',
             btlLevel: btlDefault,
-            marks: qMarks,
+            marks: marks || (key === 'part_a' ? 2 : 13),
             questionText: '',
           }
         })
@@ -135,6 +134,8 @@ function SectionBuilder() {
     }
   }, [courseId, examType, templateId])
 
+  const [analysis, setAnalysis] = useState(null)
+
   useEffect(() => {
     if (!template) return
     setSections((prev) => {
@@ -150,12 +151,7 @@ function SectionBuilder() {
         const nextQuestions = (s.questions || []).map((q, qi) => {
           if (qi !== questionIndex) return q;
           const nextQ = { ...q, ...patch };
-          if (patch.btlLevel === 'K1') {
-            nextQ.marks = 1;
-            nextQ.type = 'k1_short';
-          } else if (patch.btlLevel && q.btlLevel === 'K1') {
-            nextQ.type = nextQ.marks >= 10 ? 'analytical' : nextQ.marks <= 2 ? 'one_mark' : 'definition';
-          }
+          // Removed hardcoded K1 marks override
           return nextQ;
         })
         return { ...s, questions: nextQuestions }
@@ -172,12 +168,8 @@ function SectionBuilder() {
         const nextNo = last?.questionNumber ? String(Number(last.questionNumber) + 1) : String(next.length + 1)
 
         const nextBtl = last?.btlLevel || 'K1'
-        let nextMarks = Number(last?.marks || 0)
-        let nextType = last?.type || 'analytical'
-        if (nextBtl === 'K1') {
-          nextMarks = 1
-          nextType = 'k1_short'
-        }
+        let nextMarks = Number(last?.marks || (s.sectionId === 'A' ? 2 : 13))
+        let nextType = marks >= 10 ? 'analytical' : marks <= 2 ? 'one_mark' : 'definition'
 
         next.push({ questionNumber: nextNo, type: nextType, topic: '', btlLevel: nextBtl, marks: nextMarks, questionText: '' })
         return { ...s, questions: next }
@@ -205,6 +197,7 @@ function SectionBuilder() {
     return {
       title: paperTitle,
       examType,
+      university: "ANNA UNIVERSITY, CHENNAI",
       course: {
         courseId: course?.courseId || courseId,
         code: course?.code,
@@ -212,26 +205,28 @@ function SectionBuilder() {
         department: course?.department,
         semester: course?.semester,
       },
-      template: {
-        id: templateId,
-        name: template?.name,
-        format: template?.format,
-      },
-      sections: (sections || []).map((s) => ({
-        sectionId: s.sectionId,
-        title: s.title,
-        instructions: s.instructions || '',
-        questions: (s.questions || []).map((q) => ({
-          questionNumber: q.questionNumber,
-          type: q.type || 'analytical',
-          topic: q.topic,
-          btlLevel: q.btlLevel,
-          marks: Number(q.marks || 0),
-          questionText: q.questionText,
-        })),
-      })),
+      part_a: (sections || [])
+        .find(s => s.sectionId === 'A')?.questions.map(q => ({
+          questionNumber: q.questionNumber || "0",
+          questionText: q.questionText || "...",
+          btlLevel: q.btlLevel || "K1",
+          marks: q.marks || 2
+        })) || [],
+      part_b: ((sections || []).find(s => s.sectionId === 'B')?.questions || []).reduce((acc, q, idx) => {
+        // Safe grouping into units (assuming 2 questions per unit: a/b)
+        const unitIdx = Math.floor(idx / 2);
+        if(!acc[unitIdx]) acc[unitIdx] = { unit: `UNIT ${unitIdx + 1}`, questions: [] };
+        
+        acc[unitIdx].questions.push({
+          choice: idx % 2 === 0 ? 'a' : 'b',
+          questionText: q.questionText || "...",
+          btlLevel: q.btlLevel || "K1",
+          marks: q.marks || 13
+        });
+        return acc;
+      }, [])
     }
-  }, [paperTitle, examType, course, courseId, templateId, template, sections])
+  }, [paperTitle, examType, course, courseId, sections])
 
   const addSection = () => {
     setSections((prev) => {
@@ -270,63 +265,25 @@ function SectionBuilder() {
 
     try {
       setDownloading(true)
-      const base = (import.meta?.env?.VITE_PDF_BASE_URL || 'http://localhost:8081').replace(/\/$/, '')
-      const res = await fetch(`${base}/api/pdf/generate`, {
+      // Now pointing to our Generic Python Engine endpoint
+      const res = await fetch(`${API_BASE_URL}/api/generation/render-paper`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
         body: JSON.stringify(payload),
       })
 
       if (!res.ok) {
-        let msg = `PDF generation failed (${res.status})`
-        try {
-          const j = await res.json()
-          msg = j?.error || msg
-        } catch {
-        }
-        throw new Error(msg)
+        throw new Error('Failed to render paper using Python Engine.')
       }
 
       const blob = await res.blob()
-
-      // Save to history (non-blocking for the user download)
-      try {
-        const savePayload = {
-          institutionId: template?.institutionId,
-          courseId: course?._id || courseId,
-          templateId: template?._id || templateId,
-          title: paperTitle,
-          examType,
-          format: template?.format,
-          sections: (sections || []).map((s) => ({
-            sectionId: s.sectionId,
-            title: s.title,
-            instructions: s.instructions || '',
-            questions: (s.questions || []).map((q) => ({
-              questionNumber: q.questionNumber,
-              type: q.type || 'analytical',
-              topic: q.topic,
-              btlLevel: q.btlLevel,
-              marks: Number(q.marks || 0),
-              questionText: q.questionText,
-            })),
-          })),
-          metadata: {
-            courseCode: course?.code,
-            courseTitle: course?.title,
-            templateName: template?.name,
-          }
-        }
-        await apiRequest('/api/papers', { method: 'POST', body: savePayload })
-      } catch (saveErr) {
-        console.error('Failed to save paper to history:', saveErr)
-      }
-
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const safeCourse = (course?.courseId || 'paper').replace(/[^a-zA-Z0-9_-]/g, '_')
-      a.download = `${safeCourse}_${examType || 'exam'}.pdf`
+      a.download = `AU_Paper_${course?.code || 'Generated'}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -363,6 +320,77 @@ function SectionBuilder() {
       setSections(nextSections)
     } catch (err) {
       setError(err?.message || 'Failed to generate questions.')
+    }
+  }
+
+  const generateAuPaper = async () => {
+    setError('')
+    setDownloading(true)
+    try {
+      const payload = {
+        courseId,
+        code: course?.code,
+        subject: course?.title,
+        semester: course?.semester || 'V Semester'
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/generation/generate-au-paper`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      })
+
+      if (!res.ok) {
+        throw new Error('Failed to generate Anna University paper. Ensure AI service is running.')
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `AU_Paper_${course?.code || 'Generated'}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err?.message || 'Failed to generate AU paper.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const analyzeBtl = async () => {
+    setError('')
+    try {
+      const allQuestions = sections.flatMap(s => s.questions.map(q => ({ questionText: q.questionText, btlLevel: q.btlLevel })))
+      const res = await apiRequest('/api/generation/ai-btl-analyze', { method: 'POST', body: { questions: allQuestions }})
+      setAnalysis(res)
+    } catch (err) {
+      setError(err?.message || 'BTL Analysis failed.')
+    }
+  }
+
+  const autoFixBtl = async () => {
+    setError('')
+    try {
+      const payload = { questions: sections.flatMap(s => s.questions) }
+      const res = await apiRequest('/api/generation/auto-btl', { method: 'POST', body: payload })
+      
+      // Map back to sections
+      const updated = [...sections]
+      let cursor = 0
+      updated.forEach(s => {
+        s.questions = res.questions.slice(cursor, cursor + s.questions.length)
+        cursor += s.questions.length
+      })
+      setSections(updated)
+      analyzeBtl()
+    } catch (err) {
+      setError(err?.message || 'Auto-BTL failed.')
     }
   }
 
@@ -427,12 +455,26 @@ function SectionBuilder() {
                   </button>
                   <button
                     type="button"
+                    onClick={autoFixBtl}
+                    className="px-4 py-2 text-sm font-semibold rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    Auto-Assign BTL (AI)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={analyzeBtl}
+                    className="px-4 py-2 text-sm font-semibold rounded-md text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-700 hover:bg-gray-200"
+                  >
+                    Analyze Balance
+                  </button>
+                  <button
+                    type="button"
                     onClick={generatePdf}
                     disabled={downloading}
                     className={`px-4 py-2 text-sm font-semibold rounded-md text-white transition-colors ${downloading ? 'bg-gray-400 dark:bg-gray-700 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
                       }`}
                   >
-                    {downloading ? 'Generating...' : 'Generate PDF (Spring Boot)'}
+                    {downloading ? 'Generating...' : 'Generate Official PDF'}
                   </button>
                 </div>
               </div>
@@ -563,11 +605,37 @@ function SectionBuilder() {
 
           <div className="space-y-6">
             <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 transition-colors">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Generation</h2>
-              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-                Configure BTL levels and types. K1 should be MCQ / fill in the blanks / true or
-                false (1 mark); higher levels move towards analytical, design, and implementation.
-              </p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">BTL Intelligence</h2>
+              {analysis ? (
+                <div className="mt-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600 dark:text-gray-400">Balance Score</span>
+                    <span className={`text-lg font-bold ${analysis.balance_score > 80 ? 'text-emerald-500' : 'text-orange-500'}`}>
+                      {analysis.balance_score}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                    <div 
+                      className="bg-emerald-500 h-2 rounded-full transition-all duration-500" 
+                      style={{ width: `${analysis.balance_score}%` }}
+                    ></div>
+                  </div>
+                  {analysis.recommendations.length > 0 && (
+                    <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-100 dark:border-indigo-900/30">
+                      <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-400">Suggestions:</p>
+                      <ul className="mt-1 space-y-1">
+                        {analysis.recommendations.map((rec, i) => (
+                          <li key={i} className="text-[10px] text-indigo-600 dark:text-indigo-300">• {rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                  Click 'Analyze Balance' to check Bloom's Taxonomy distribution.
+                </p>
+              )}
               <div className="mt-4">
                 <BTLBadge />
               </div>

@@ -1,5 +1,7 @@
 import express from 'express'
-
+import mongoose from 'mongoose'
+import Syllabus from '../models/Syllabus.js'
+import Note from '../models/Note.js'
 import Course from '../models/Course.js'
 import Institution from '../models/Institution.js'
 import { requireAuth } from '../middleware/auth.js'
@@ -8,6 +10,28 @@ import { generateCourseId } from '../utils/generateCourseId.js'
 import { writeAuditLog } from '../services/audit.js'
 
 const router = express.Router()
+
+// @route   GET /api/courses/health
+// @desc    Check system health (DB and AI Service)
+router.get('/health', async (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'online' : 'offline'
+  
+  // Try pinging AI service
+  let aiStatus = 'offline'
+  try {
+    const pythonServiceUrl = process.env.ANNA_AI_SERVICE_URL || 'http://localhost:5001'
+    await axios.get(`${pythonServiceUrl}/health`, { timeout: 2000 })
+    aiStatus = 'online'
+  } catch (err) {
+    aiStatus = 'offline'
+  }
+
+  res.json({
+    database: dbStatus,
+    aiService: aiStatus,
+    timestamp: new Date()
+  })
+})
 
 router.use(requireAuth)
 
@@ -24,8 +48,29 @@ router.get('/', async (req, res, next) => {
       ]
     }
 
-    const items = await Course.find(filter).sort({ createdAt: -1 })
-    res.json({ items })
+    const items = await Course.find(filter).sort({ createdAt: -1 }).lean()
+    
+    console.log(`[Courses API]: Found ${items.length} courses for filter:`, filter)
+
+    // Check for syllabus existence for each course
+    const enrichedItems = await Promise.all(items.map(async (course) => {
+      // Robust check: matches both ObjectId and String formats
+      const syllabus = await Syllabus.findOne({ 
+        courseId: { $in: [course._id, String(course._id)] } 
+      })
+      
+      if (syllabus) {
+        console.log(`  - Course ${course.code}: Syllabus found.`)
+      } else {
+        console.log(`  - Course ${course.code}: NO syllabus found. searched for courseId: ${course._id}`)
+      }
+      return {
+        ...course,
+        hasSyllabus: !!syllabus
+      }
+    }))
+
+    res.json({ items: enrichedItems })
   } catch (err) {
     next(err)
   }
@@ -122,6 +167,54 @@ router.post('/:id/deactivate', requireRole(['admin']), async (req, res, next) =>
     })
 
     res.json({ ok: true })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.delete('/', requireRole(['admin']), async (req, res, next) => {
+  try {
+    // 🚨 Danger Zone: Clear everything
+    await Syllabus.deleteMany({})
+    await Note.deleteMany({})
+    await Course.deleteMany({})
+
+    await writeAuditLog({
+      req,
+      userId: req.user.id,
+      action: 'all_courses_cleared',
+      resourceType: 'system',
+    })
+
+    res.json({ ok: true, message: 'All courses, syllabuses, and notes have been cleared' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+router.delete('/:id', requireRole(['admin']), async (req, res, next) => {
+  try {
+    const courseId = req.params.id
+    const doc = await Course.findById(courseId)
+    if (!doc) return res.status(404).json({ error: 'Course not found' })
+
+    // 1. Delete associated Syllabuses
+    await Syllabus.deleteMany({ courseId })
+    // 2. Delete associated Notes
+    await Note.deleteMany({ courseId })
+    // 3. Delete the Course itself
+    await Course.findByIdAndDelete(courseId)
+
+    await writeAuditLog({
+      req,
+      userId: req.user.id,
+      action: 'course_deleted',
+      resourceType: 'course',
+      resourceId: courseId,
+      details: { code: doc.code, title: doc.title }
+    })
+
+    res.json({ ok: true, message: 'Course and all related data deleted successfully' })
   } catch (err) {
     next(err)
   }
