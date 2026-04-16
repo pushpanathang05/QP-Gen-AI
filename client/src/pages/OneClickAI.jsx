@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { apiRequest } from '../services/api'
 
-const API_BASE_URL = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '')
+const API_BASE_URL = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:5005').replace(/\/$/, '')
 
 function OneClickAI() {
   const [courses, setCourses] = useState([])

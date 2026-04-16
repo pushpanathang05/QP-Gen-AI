@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { apiRequest } from '../services/api'
 import BTLBadge from '../components/BTLBadge'
 
-const API_BASE_URL = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '')
+const API_BASE_URL = (import.meta?.env?.VITE_API_BASE_URL || 'http://localhost:5005').replace(/\/$/, '')
 
 function SectionBuilder() {
   const [searchParams] = useSearchParams()
@@ -20,6 +20,13 @@ function SectionBuilder() {
 
   const [sections, setSections] = useState([])
   const [downloading, setDownloading] = useState(false)
+
+  // Meta for PDF
+  const [regulation, setRegulation] = useState('Regulations 2021')
+  const [examName, setExamName] = useState('B.E/B.Tech. DEGREE EXAMINATIONS')
+  const [semester, setSemester] = useState('')
+  const [examTime, setExamTime] = useState('3 Hours')
+  const [maxMarks, setMaxMarks] = useState(100)
 
   const examLabel = useMemo(() => {
     if (examType === 'internal') return 'Internal'
@@ -256,17 +263,40 @@ function SectionBuilder() {
 
   const generatePdf = async () => {
     setError('')
-    if (!sections.length) {
+    if (!sections || !sections.length) {
       setError('Please add at least one section with questions.')
       return
     }
 
-    const payload = buildPdfPayload()
+    // Prepare payload for qp-pdf via our backend proxy
+    const payload = {
+      courseId,
+      templateId: templateId || 'anna-university',
+      examName: examName,
+      semester: semester || `${course?.semester || 'Third'} Semester`,
+      regulation: regulation,
+      time: examTime,
+      maxMarks: maxMarks,
+      sections: (sections || []).map(s => {
+        const marksPerQ = s.questions?.[0]?.marks || (s.sectionId === 'A' ? 2 : 13);
+        const totalQs = s.questions?.length || 0;
+        
+        return {
+          id: `PART-${s.sectionId}`, // e.g. PART-A
+          title: `${s.title} (${totalQs} x ${marksPerQ} = ${totalQs * marksPerQ} Marks)`,
+          marksPerQuestion: marksPerQ,
+          totalQuestionsToAnswer: totalQs,
+          questions: (s.questions || []).map(q => ({
+            text: q.questionText || '...',
+            marks: Number(q.marks || 0)
+          }))
+        };
+      })
+    }
 
     try {
       setDownloading(true)
-      // Now pointing to our Generic Python Engine endpoint
-      const res = await fetch(`${API_BASE_URL}/api/generation/render-paper`, {
+      const res = await fetch(`${API_BASE_URL}/api/generation/convert-to-pdf`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json'
@@ -276,20 +306,24 @@ function SectionBuilder() {
       })
 
       if (!res.ok) {
-        throw new Error('Failed to render paper using Python Engine.')
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to render paper using QP-PDF Engine.')
       }
 
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `AU_Paper_${course?.code || 'Generated'}.pdf`
+      a.download = `Question_Paper_${course?.code || 'Generated'}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
     } catch (err) {
-      setError(err?.message || 'Failed to generate PDF.')
+      console.error('[PDF Generation Error]:', err);
+      // Try to extract detailed error message if available
+      const detailMsg = err?.message || 'Failed to generate PDF.';
+      setError(detailMsg);
     } finally {
       setDownloading(false)
     }
@@ -419,18 +453,56 @@ function SectionBuilder() {
           <div className="lg:col-span-2 space-y-6">
             <section className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 transition-colors">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Paper Context</h2>
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
                   <p className="text-xs text-gray-500 dark:text-gray-400">Course</p>
-                  <p className="font-medium text-gray-900 dark:text-white transition-colors">{course ? `${course.courseId} — ${course.title}` : courseId}</p>
+                  <p className="font-medium text-gray-900 dark:text-white transition-colors">{course ? `${course.code} — ${course.title}` : courseId}</p>
                 </div>
                 <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
                   <p className="text-xs text-gray-500 dark:text-gray-400">Exam Type</p>
                   <p className="font-medium text-gray-900 dark:text-white transition-colors">{examLabel}</p>
                 </div>
-                <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 md:col-span-2">
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Template</p>
-                  <p className="font-medium text-gray-900 dark:text-white transition-colors">{template?.name || templateId}</p>
+                <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                   <p className="text-xs text-gray-500 dark:text-gray-400">Regulation</p>
+                   <input 
+                    value={regulation} 
+                    onChange={e => setRegulation(e.target.value)}
+                    className="mt-0.5 w-full bg-transparent border-none p-0 font-medium text-gray-900 dark:text-white focus:ring-0" 
+                   />
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                   <p className="text-xs text-gray-500 dark:text-gray-400">Semester</p>
+                   <input 
+                    value={semester} 
+                    onChange={e => setSemester(e.target.value)}
+                    placeholder={course?.semester || 'Third Semester'}
+                    className="mt-0.5 w-full bg-transparent border-none p-0 font-medium text-gray-900 dark:text-white focus:ring-0" 
+                   />
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                   <p className="text-xs text-gray-500 dark:text-gray-400">Time</p>
+                   <input 
+                    value={examTime} 
+                    onChange={e => setExamTime(e.target.value)}
+                    className="mt-0.5 w-full bg-transparent border-none p-0 font-medium text-gray-900 dark:text-white focus:ring-0" 
+                   />
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                   <p className="text-xs text-gray-500 dark:text-gray-400">Max Marks</p>
+                   <input 
+                    type="number"
+                    value={maxMarks} 
+                    onChange={e => setMaxMarks(Number(e.target.value))}
+                    className="mt-0.5 w-full bg-transparent border-none p-0 font-medium text-gray-900 dark:text-white focus:ring-0" 
+                   />
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 md:col-span-3">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Full Exam Name</p>
+                  <input 
+                    value={examName} 
+                    onChange={e => setExamName(e.target.value)}
+                    className="mt-0.5 w-full bg-transparent border-none p-0 font-medium text-gray-900 dark:text-white focus:ring-0" 
+                   />
                 </div>
               </div>
             </section>

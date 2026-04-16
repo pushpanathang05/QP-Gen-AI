@@ -8,6 +8,9 @@ import { requireAuth } from '../middleware/auth.js'
 import { requireRole } from '../middleware/requireRole.js'
 import Syllabus from '../models/Syllabus.js'
 import Note from '../models/Note.js'
+import Course from '../models/Course.js'
+import Institution from '../models/Institution.js'
+import Template from '../models/Template.js'
 
 const router = express.Router()
 
@@ -15,8 +18,123 @@ router.use(requireAuth)
 router.use(requireRole(['admin', 'faculty']))
 
 const LOCAL_AI_URL = (process.env.ANNA_AI_SERVICE_URL || 'http://127.0.0.1:5001').replace('localhost', '127.0.0.1')
+const QP_PDF_SERVICE_URL = (process.env.QP_PDF_SERVICE_URL || 'http://127.0.0.1:5000').replace('localhost', '127.0.0.1')
 
 console.log('>>> GENERATION ROUTES LOADED (v2 with extractContext fix) <<<');
+/**
+ * @route   POST /api/generation/convert-to-pdf
+ * @desc    Convert generated question JSON to PDF using the QP-PDF service
+ */
+router.post('/convert-to-pdf', async (req, res, next) => {
+  try {
+    const { courseId, institutionId, templateId, sections, examName, semester, regulation, time, maxMarks } = req.body || {}
+
+    console.log(`[Convert-to-PDF]: Request received for courseId: ${courseId}`);
+
+    if (!courseId) return res.status(400).json({ error: 'courseId is required' })
+    if (!sections || !Array.isArray(sections)) return res.status(400).json({ error: 'sections must be an array' })
+
+    // 1. Fetch metadata for the PDF header
+    let course;
+    try {
+      if (mongoose.Types.ObjectId.isValid(courseId)) {
+        course = await Course.findById(courseId)
+      }
+      if (!course) {
+        course = await Course.findOne({ courseId: String(courseId).toUpperCase() })
+      }
+    } catch (err) {
+      console.error(`[Convert-to-PDF]: Error finding course: ${err.message}`);
+    }
+
+    if (!course) {
+      console.error(`[Convert-to-PDF]: Course not found: ${courseId}`);
+      return res.status(404).json({ error: 'Course not found' })
+    }
+
+    const institution = await Institution.findById(institutionId || course.institutionId)
+    
+    // 2. Prepare the payload for QP-PDF
+    // Note: QP-PDF expects a folder name in src/templates (e.g., 'anna-university').
+    // If templateId is a MongoDB ID, we default to 'anna-university' for now.
+    const finalTemplateId = (templateId && !mongoose.Types.ObjectId.isValid(templateId)) 
+      ? templateId 
+      : 'anna-university';
+
+    const payload = {
+      templateId: finalTemplateId,
+      collegeName: institution?.name || req.body.collegeName || 'Example Engineering College',
+      departmentName: course.department || req.body.departmentName || 'Department of Computer Science',
+      examName: examName || 'B.E/B.Tech. DEGREE EXAMINATIONS',
+      semester: semester || `${course.semester || 'Third'} Semester`,
+      subjectCode: course.code,
+      subjectName: course.title,
+      regulation: regulation || 'Regulations 2021',
+      time: time || '3 Hours',
+      maxMarks: maxMarks || 100,
+      sections: sections.map(s => ({
+        id: s.sectionId || s.id,
+        title: s.title,
+        marksPerQuestion: s.marksPerQuestion || (s.questions && s.questions?.[0]?.marks) || 2,
+        totalQuestionsToAnswer: s.totalQuestionsToAnswer || s.questions?.length || 10,
+        questions: (s.questions || []).map(q => ({
+          text: q.text || q.questionText || '...',
+          marks: q.marks || 2
+        }))
+      }))
+    }
+
+    // 3. Forward to QP-PDF service
+    console.log(`[Convert-to-PDF]: Sending payload to ${QP_PDF_SERVICE_URL}/api/v1/pdf/generate`);
+    
+    try {
+      const pdfResponse = await axios.post(`${QP_PDF_SERVICE_URL}/api/v1/pdf/generate`, payload, {
+        responseType: 'stream',
+        timeout: 120000,
+        family: 4
+      })
+
+      // 4. Stream response back to client
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', 'attachment; filename="question-paper.pdf"')
+      pdfResponse.data.pipe(res)
+    } catch (err) {
+      console.error('[Convert-to-PDF Axios Error]:', err.message);
+      
+      if (err.response && err.response.data) {
+        // Since responseType is 'stream', we need to read the error from the stream
+        let errorData = '';
+        try {
+          for await (const chunk of err.response.data) {
+            errorData += chunk;
+          }
+        } catch (readErr) {
+          errorData = 'Could not read error stream';
+        }
+        
+        console.error('[Convert-to-PDF Downstream Error]:', errorData);
+        
+        let parsedError;
+        try {
+          parsedError = JSON.parse(errorData);
+        } catch (e) {
+          parsedError = { error: errorData };
+        }
+        
+        return res.status(err.response.status).json({ 
+          error: parsedError.error || parsedError.message || 'PDF Generation failed in QP-PDF service.',
+          details: parsedError
+        });
+      }
+      
+      throw err;
+    }
+
+  } catch (err) {
+    console.error('[Convert-to-PDF Catch-All Error]:', err.message);
+    next(err);
+  }
+})
 
 // --- HELPER FUNCTIONS (Restored at top-level) ---
 
@@ -184,6 +302,33 @@ router.post('/mock', async (req, res, next) => {
   } catch (err) {
     console.error('[Mock API Error]:', err.message);
     next(err)
+  }
+})
+
+/**
+ * @route   POST /api/generation/render-paper
+ * @desc    Forward paper data to Python Engine for PDF rendering
+ */
+router.post('/render-paper', async (req, res, next) => {
+  try {
+    console.log(`[Render-Paper API]: Forwarding to ${LOCAL_AI_URL}/render-paper`);
+    
+    const pythonResponse = await axios.post(`${LOCAL_AI_URL}/render-paper`, req.body, {
+      responseType: 'stream',
+      timeout: 120000,
+      family: 4 // FORCE IPv4
+    })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'attachment; filename="question-paper.pdf"')
+    pythonResponse.data.pipe(res)
+
+  } catch (err) {
+    console.error('[Render-Paper API Error]:', err.message);
+    if (err.response) {
+       return res.status(err.response.status).json({ error: 'Python Engine failed to render PDF.' });
+    }
+    next(err);
   }
 })
 
